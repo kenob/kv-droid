@@ -3,5 +3,13 @@
 
     <string name="app_name">SimpleDynamo</string>
     <string name="action_settings">Settings</string>
-
+    <string name="button_ldump">LDump</string>
+    <string name="button_gdump">GDump</string>
+    <string name="button_test">Test</string>
+    <string name="button_query">QUERY</string>
+    <string name="button_gdel">GDEL</string>
+    <string name="button_ldel">LDEL</string>
+    <string name="button_ins">INS</string>
+    <string name="button_del">DEL</string>
+    <string name="button_hash">HASH</string>
 </resources>
