@@ -1,7 +1,7 @@
 # kv-droid
 A distributed (P2P) key value storage for Android
 
-A distributed key value store for Android devices (AVD's for now) connected to a LAN Network providing:
+A distributed key value store for Android devices (connected AVD's for now) providing:
 - Per key linearizability
 - Eventual consistency
 - Failure handling
