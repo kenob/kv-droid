@@ -20,12 +20,18 @@ import java.net.SocketTimeoutException;
  * Created by keno on 4/1/15.
  */
 public class ClientTask extends AsyncTask<String, Void, Message>{
+    /*
+        Task for sending out messages
+    */
     private static final String TAG = "DYClient";
     Message msg;
     String target;
     boolean expectReply;
 
     public ClientTask(Message msg, String target, boolean expectReply){
+        /*
+            Constructor
+        */
         this.msg = msg;
         this.target = target;
         this.expectReply = expectReply;
@@ -39,6 +45,10 @@ public class ClientTask extends AsyncTask<String, Void, Message>{
 
     @Override
     protected Message doInBackground(String... strings) {
+        /*
+            Sends a message, and starts the timer, if the 
+            expectReply is true
+        */
         Log.d(TAG, "sending to " + target);
 
         Socket socket = null;

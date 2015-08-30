@@ -22,6 +22,9 @@ public class Router {
     private static final String TAG = "DYRouter";
 
     public static Router getInstance(){
+        /*
+            Returns a singleton router instance
+        */
         if (routerInstance == null){
             routerInstance = new Router();
         }
@@ -29,6 +32,10 @@ public class Router {
     }
 
     public void initMyPort(String node){
+        /*
+            Sets the port number of this node for
+            route calculations
+        */
         try {
             myPort = genHash(node);
         } catch (NoSuchAlgorithmException e) {
@@ -37,6 +44,11 @@ public class Router {
     }
 
     public void initNodes(String[] nodeArray){
+        /*
+            Initializes all known nodes (ports) to be used in the routing
+            table. All nodes need to be known at the beginning,
+            whether or not they are alive
+        */
         nodeMap = new TreeMap<>();
         nodeList = new ArrayList<>();
         for (String nodeName : nodeArray){
@@ -52,8 +64,9 @@ public class Router {
     }
 
     public String getCoordinator(String key, boolean hashed){
-        /* Gets the coordinator for a given key either in the hashed or unhashed form
-        * */
+        /* 
+            Returns the coordinator port for a given key either in the hashed or unhashed form
+        */
         String hashedKey;
         try {
             hashedKey = genHash(key);
@@ -83,7 +96,9 @@ public class Router {
     }
 
     public ArrayList<String> getSuccessors(String node){
-        /* Given a node, get the replica server addresses
+        /* 
+            Returns the replica server addresses
+            for a given node (port)
         */
         int position = 0;
         try {
@@ -101,7 +116,9 @@ public class Router {
     }
 
     public ArrayList<String> getKeySuccessors(String key){
-        /* Given a node, get the replica server addresses
+        /* 
+            Returns the replica server addresses
+            for a given key
         */
         String node = getCoordinator(key,true);
         int position = nodeList.indexOf(node);
@@ -115,7 +132,8 @@ public class Router {
     }
 
     public ArrayList<String> getGroup(String key){
-        /* Given a node, get the replica server addresses
+        /* 
+            Returns all the members of the replica group for a given key
         */
         String node = getCoordinator(key, false);
 
@@ -136,9 +154,10 @@ public class Router {
     }
 
     public HashSet<String> getNeighbors(String node){
-        /* Return all nodes that could possibly possess
-        i) Keys for which I am the coordinator
-        ii) Keys for which I am a replica server
+        /* 
+            Return all nodes that could possibly possess
+            i) Keys for which this node is the coordinator
+            ii) Keys for which this node is a replica server
         */
         int pBackward = 0;
         try {
@@ -161,14 +180,16 @@ public class Router {
     }
 
     private int getNextIndex(int current){
-        /* Performs the wrap around function while attempting to get
-           indexes of replica servers
+        /* 
+            Performs the wrap around function while attempting to get
+            indexes of replica servers
          */
         return  (current + 1) % nodeList.size();
     }
 
     private int getPrevIndex(int current){
-        /* Performs the wrap around function while attempting to get
+        /* 
+            Performs the reverse wrap around function while attempting to get
            indexes of replica servers
          */
         int ret = current - 1;
@@ -179,7 +200,8 @@ public class Router {
     }
 
     public int nodesFailed(String key){
-        /* Given a key, estimate the number of nodes that failed before
+        /* 
+            Given a key, this method estimates the number of nodes that failed before
            this key was finally sent to me (i.e my position in the preference list)
          */
         int ret = 0;
@@ -200,6 +222,10 @@ public class Router {
     }
 
     private String genHash(String input) throws NoSuchAlgorithmException {
+        /*
+            Hash generation utility. The NoSuchAlgorighmException should never 
+            actually be thrown, and so we shall take it lightly
+        */
         MessageDigest sha1 = MessageDigest.getInstance("SHA-1");
         byte[] sha1Hash = sha1.digest(input.getBytes());
         Formatter formatter = new Formatter();

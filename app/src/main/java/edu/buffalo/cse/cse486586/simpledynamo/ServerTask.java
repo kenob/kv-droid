@@ -18,21 +18,30 @@ import java.util.concurrent.Executor;
  * Created by keno on 4/21/15.
  */
 public class ServerTask extends AsyncTask<ServerSocket, Cursor, Void>{
-    private SimpleDynamoProvider dhtp;
-    String myPort;
+    /*
+        Asynchronous task that handles incoming messages from other nodes
+    */
+    private SimpleDynamoProvider dhtp; // The provider object
+    String myPort; 
     static final String TAG = "DYServer";
     private static ServerTask currentServerTask;
-    private HashMap<String, Message> messageBank;
+    private HashMap<String, Message> messageBank; // Stores locally sent messages
     static final Executor SER = AsyncTask.SERIAL_EXECUTOR;
-    private HashSet<Integer> forbiddenPorts;
-    Router router;
-    SimpleDynamoActivity home;
+    // private HashSet<Integer> forbiddenPorts;
+    Router router;  // Router instance
+    SimpleDynamoActivity home;  // User facing activity
 
     public synchronized HashMap<String, Message> getMessageBank() {
+        /*
+            Getter for the local message bank
+        */
         return messageBank;
     }
 
     public ServerTask(SimpleDynamoProvider simpleDhtProvider, String myPort) {
+        /*
+            Constructor
+        */
         Log.d(TAG, "Initializing!");
         this.dhtp = simpleDhtProvider;
         this.myPort = myPort;
@@ -40,23 +49,37 @@ public class ServerTask extends AsyncTask<ServerSocket, Cursor, Void>{
         messageBank = new HashMap<>();
         Log.d(TAG, "All initialized!");
         router = Router.getInstance();
-        forbiddenPorts = new HashSet<>();
+        // forbiddenPorts = new HashSet<>();
     }
 
     public static ServerTask getServerTask(){
+        /*
+            Singleton getter for server task
+        */
         return currentServerTask;
     }
     public SimpleDynamoProvider getDhtp() {
+        /*
+            Getter for the provider object
+        */
         return dhtp;
     }
 
     @Override
     protected void onProgressUpdate(Cursor... values) {
+        /*
+            Relays results to the user facing activity to be 
+            displayed on the screen
+        */
         SimpleDynamoActivity.printToScreen(values[0]);
     }
 
     @Override
     protected Void doInBackground(ServerSocket... sockets) {
+        /*
+            Listens for connections, and processes received messages
+            according to their message types
+        */
         ServerSocket serverSocket = sockets[0];
         DataInputStream inputStream;
         while (true) {
@@ -77,52 +100,68 @@ public class ServerTask extends AsyncTask<ServerSocket, Cursor, Void>{
 
                 else if (getMessageBank().containsKey(message.sendId) &&
                         !(message.getSender().equals(myPort) && message.inSDClass())){
+                    // If this is a reply to a sent message (stored in the message bank), set the reply
                     Log.d(TAG, "Message exists in bank");
                     getMessageBank().get(message.sendId).setReply(message);
                 }
 
                 else if (message.getmType().equals(MType.ACK)) {
+                    // Handle Acks
 
                 }
                 else if (message.getmType().equals(MType.PRINTLOCAL)) {
+                    // Handle request to print out all the keys and values stored on this node
                     Cursor cur = dhtp.queryNodeLocal(message.getMessage());
                     publishProgress(cur);
                 }
                 else if (message.getmType().equals(MType.WAKE)) {
+                    // Handle wake messages from another node.
+                    // Sends the node all messages it may have missed since it was
+                    // last seen
+                    // Spawns a new task for this to avoid blocking the server's activities
                     new CRUDHandler(dhtp,message,MType.WAKE,"").start();
                     Log.d(TAG, "Spawned new crud task for WAKE to " +message.getSender());
                 }
                 else if (message.getmType().equals(MType.TRANSFER)) {
+                    // Handles a truckload of missed messages sent to this node from
+                    // another node. 
+                    // Spawns a new task for this to avoid blocking the server's activities
                     new CRUDHandler(dhtp,message,MType.TRANSFER,"").start();
                     Log.d(TAG, "Spawned new crud task for TRANSFER to " + message.getSender());
                 }
                 else if (message.getmType().equals(MType.DELETE)) {
+                    // Handles a request to delete a key for which this this node acts as a coordinator 
+                    // and sends back an ack
                     dhtp.deleteMaster(message.getMessage());
                     String sender = message.getSender();
                     message.setSender(SimpleDynamoProvider.myPort);
                     message.setmType(MType.DELETED);
-                    new ClientTask(message,sender,false).executeOnExecutor(SER);
+                    new ClientTask(message, sender, false).executeOnExecutor(SER);
                 }
                 else if (message.getmType().equals(MType.DELETE_REPLICA)) {
+                    // Handles a request to delete a key for which this node is a replica
+                    // No need for an ack, as we assume eventual consistency to reduce blocking time
                     dhtp.deleteNodeLocal(message.getMessage());
-                    //return local
                 }
                 else if (message.getmType().equals(MType.DELETEALL)) {
+                    // Handles a request to delete all keys from this node, and sends back an ack
                     int deleted = dhtp.deleteAllLocal();
                     message.setMessage(Integer.toString(deleted));
                     String sender = message.getSender();
                     message.setSender(SimpleDynamoProvider.myPort);
-                    new ClientTask(message,sender,false).executeOnExecutor(SER);
+                    new ClientTask(message, sender, false).executeOnExecutor(SER);
                 }
                 else if (message.getmType().equals(MType.INSERT)) {
+                    // Handles a request to insert a key for which this node acts as a coordinator
                     String[] kvp = message.getMessage().split(":");
                     new CRUDHandler(dhtp,message,MType.INSERT,kvp[0], kvp[1]).start();
                     Log.d(TAG, "Spawned new crud task for " + message.toString());
                 }
                 else if (message.getmType().equals(MType.INSERT_REPLICA)) {
+                    // Handles a request to insert a key for which this node acts as a replica server
                     String[] kvp = message.getMessage().split(":");
 
-                    //prevent nodes from saving keys not belonging to them
+                    //prevent this node from saving a key that shouldn't reside here
                     if (router.getKeySuccessors(kvp[0]).contains(myPort) && kvp.length > 1) {
                         dhtp.insertSlave(kvp[0], kvp[1]);
                         message.setmType(MType.ACK);
@@ -139,16 +178,20 @@ public class ServerTask extends AsyncTask<ServerSocket, Cursor, Void>{
                     // Last resort insertion
                     String[] kvp = message.getMessage().split(":");
 
-                    //prevent nodes from saving keys not belonging to them
+                    //prevent this node from saving a key that shouldn't reside here
                     if (router.getGroup(kvp[0]).contains(myPort) && kvp.length > 1) {
                         dhtp.insertSlave(kvp[0], kvp[1]);
                     }
                 }
                 else if (message.getmType().equals(MType.QUERY)){
+                    // Handles a query for a key for which this node acts as a coordinator.
+                    // Spawns a new task, as this requires waiting for other nodes to respond
+                    // and that could block the server's core operations
                     new CRUDHandler(dhtp,message,MType.QUERY, message.getMessage()).start();
                     Log.d(TAG, "Spawned new crud task " + message.toString());
                 }
                 else if (message.getmType().equals(MType.QUERY_REPLICA)) {
+                    // Handles a query for which this node acts as a replica server
                     String sender = message.getSender();
                     message.setSender(SimpleDynamoProvider.myPort);
                     String key = message.getMessage();
@@ -170,6 +213,7 @@ public class ServerTask extends AsyncTask<ServerSocket, Cursor, Void>{
                         new ClientTask(message, sender, false).executeOnExecutor(SER);
                     }
                 } else if (message.getmType().equals(MType.QUERYALL)) {
+                    // Handles a query for all keys residing on this node
                     StringBuilder newMessage = new StringBuilder();
                     HashSet<String> myKVs = dhtp.listKVLocal();
                     for (String kv : myKVs) {
@@ -188,6 +232,9 @@ public class ServerTask extends AsyncTask<ServerSocket, Cursor, Void>{
     }
 
     public String cursorToString(Cursor cur){
+        /*
+            Returns a string representation of a key-value cursor
+        */
         int valIndex = cur.getColumnIndex("value");
         int keyIndex = cur.getColumnIndex("key");
 
@@ -196,21 +243,33 @@ public class ServerTask extends AsyncTask<ServerSocket, Cursor, Void>{
     }
 
     public synchronized void saveMessage(Message msg) {
+        /*
+            Saves a message in the sent message bank. We 
+            need this to be synchronized so the ids aren't
+            screwed up by concurrent calls
+        */
         this.getMessageBank().put(msg.sendId, msg);
     }
 
     public void deleteMessage(String msgId) {
+        /*
+            Removes a message from the message bank
+        */
         this.getMessageBank().remove(msgId);
     }
 
     public void flushMessageBank(){
+        /*
+            Poisons all reply queues to release all activities
+            waiting for a reply
+        */
         for(Message mess : getMessageBank().values()){
             mess.poisonReplyQueue();
         }
     }
-    private synchronized HashSet<Integer> getForbiddenPorts(){
-        return forbiddenPorts;
-    }
+//     private synchronized HashSet<Integer> getForbiddenPorts(){
+//         return forbiddenPorts;
+//     }
 //
 //    public void registerSession(Integer port){
 //        this.getForbiddenPorts().remove(port);

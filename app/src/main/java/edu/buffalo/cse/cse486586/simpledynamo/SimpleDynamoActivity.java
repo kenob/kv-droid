@@ -64,8 +64,6 @@ public class SimpleDynamoActivity extends Activity {
             }
         });
 
-
-
         final EditText ed = (EditText) findViewById(R.id.editText1);
 
 
@@ -140,11 +138,17 @@ public class SimpleDynamoActivity extends Activity {
     }
 
     private void printQueryResults(String query, TextView tv){
+        /*
+            Runs a query and prints the result to the screen
+        */
         Cursor rCursor = getContentResolver().query(mUri, null,query, null, null);
         printToScreen(rCursor);
     }
 
     public static void printToScreen(Cursor rCursor){
+        /*
+            Prints the contents of a result cursor to the screen
+        */
         TextView tv = textV;
         tv.setText("");
         if (rCursor == null) {
@@ -172,6 +176,9 @@ public class SimpleDynamoActivity extends Activity {
     }
 
     private Uri buildUri(String scheme, String authority) {
+        /*
+            Builds a URI
+        */
         Uri.Builder uriBuilder = new Uri.Builder();
         uriBuilder.authority(authority);
         uriBuilder.scheme(scheme);

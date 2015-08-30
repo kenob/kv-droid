@@ -88,68 +88,6 @@ public class SimpleDynamoProvider extends ContentProvider {
         return 0;
     }
 
-    public boolean deleteNodeLocal(String selection) {
-        return getContext().deleteFile(selection);
-    }
-
-    public int deleteAllLocal(){
-        String[] files = getContext().fileList();
-        for (String file : files){
-            deleteNodeLocal(file);
-        }
-        return files.length;
-    }
-
-    public void deleteMaster(String key){
-        //treat deletions as writes
-        String value = insertMaster(key,"blah",true);
-        for (String node : router.getSuccessors(myPort)){
-            Message msg = new Message(MType.INSERT_REPLICA,myPort,getKVStr(key,value),getMessageId());
-            new ClientTask(msg, node, false).executeOnExecutor(SER);
-        }
-    }
-
-    private Message sendAndDetect(Message msgTemplate, String coord){
-        Message reply;
-        Queue<Message> retryQueue = new LinkedList<>();
-        ArrayList<String> successors = router.getSuccessors(coord);
-        int count = 0;
-        String currentTarget;
-        // If there is a failure, resend the request to the successors
-        while (count < successors.size()) {
-            currentTarget = coord;
-            if (count > 0){
-                currentTarget = successors.get(count - 1);
-            }
-            if (currentTarget.equals(myPort)){
-                Log.d(TAG, "THIS ONE IS MINE");
-            }
-            Message msg = msgTemplate.makeCopy(getMessageId());
-            new ClientTask(msg, currentTarget, true).executeOnExecutor(SER);
-            reply = msg.getReply();
-            if (!reply.getmType().equals(MType.VOID)){
-                Log.d(TAG, "Returning " + reply + " to message " + msg);
-                return reply;
-            }
-            retryQueue.add(msg);
-            count += 1;
-            Log.d(TAG, "THAT ONE GOT AWAY, RETRYING ...");
-        }
-
-        /*Check if some reply has arrived for one of the old message. (Un)surprisingly, this actually,
-        this actually happens
-         */
-        while (!retryQueue.isEmpty()){
-            Message msg = retryQueue.poll();
-            reply = msg.getReply();
-            if (!reply.getmType().equals(MType.VOID)){
-                return reply;
-            }
-        }
-
-        Log.d(TAG, "ALL HOPE IS LOST - MAYDAY");
-        return null;
-    }
 
 
 	@Override
@@ -200,115 +138,9 @@ public class SimpleDynamoProvider extends ContentProvider {
         return uri;
     }
 
-    public String insertKeyLocal(String key, String value) throws QuorumException {
-        //Only master node timestamps
-        String timeStampedValue = insertMaster(key, value, false);
-        int quorumCount = 1;
-        Log.d(TAG, "successors are " + router.getSuccessors(myPort));
-        Log.d(TAG, "Inserting keys...");
-        Deque<Message> tempQueue = new LinkedList<>();
-        ArrayList<String> successors = Router.getInstance().getSuccessors(SimpleDynamoProvider.myPort);
-
-        for (String node : successors) {
-            Message msg = new Message(MType.INSERT_REPLICA,myPort,getKVStr(key, timeStampedValue),getMessageId());
-            tempQueue.add(msg);
-            new ClientTask(msg, node, true).executeOnExecutor(AsyncTask.SERIAL_EXECUTOR);
-        }
-        Deque<Message> backupQueue = new LinkedList<>();
-        int waitRounds = 0;
-
-        while (quorumCount < WRITE_QUORUM) {
-            Log.d(TAG, "Current queue is " + tempQueue);
-            if (tempQueue.isEmpty() && waitRounds <=1){
-                Log.d(TAG, "Swapping queues");
-                tempQueue = backupQueue;
-                backupQueue = new LinkedList<>();
-                waitRounds += 1;
-            }
-            Message msg = tempQueue.poll();
-            if(msg != null) {
-                Message reply = msg.getReply();
-                if (reply.getmType().equals(MType.VOID)) {
-                    //Just in case this isn't a failure
-                    backupQueue.add(msg);
-                }
-                else if (reply.getmType().equals(MType.REJECT)) {
-                    //do nothing
-                }
-                else{
-                    quorumCount += 1;
-                    Log.d(TAG, "One replica replied, quorum count now " + quorumCount);
-                    if (quorumCount >= WRITE_QUORUM) {
-                        return timeStampedValue;
-                    }
-                }
-            }
-            else {
-                Log.d(TAG, "ALL HOPE IS LOST. MAYDAY :'(");
-                break;
-            }
-        }
-        return timeStampedValue;
-    }
-
-    public String insertMaster(String key, String value, boolean delete) {
-        /* For keys without timestamps
-           Return value format: <coordinator>##<timestamp>##<value>##e:
-           Ensures that write is entirely completed for it to be
-           reported as complete
-        */
-        String deletedFlag = "E";
-        if (delete){
-            deletedFlag = DELETED_FLAG;
-        }
-
-        DataOutputStream outputStream;
-        String coord = router.getCoordinator(key, false);
-        value = coord + "##" + getVectorClock(coord,0, true) + "##" + value + "##" + deletedFlag;
-        try {
-            outputStream = new DataOutputStream(getContext().openFileOutput(key, Context.MODE_PRIVATE));
-            outputStream.writeUTF(value);
-            outputStream.close();
-            return value;
-        }
-        catch (IOException e){
-            Log.e(TAG, "File write failed");
-        }
-        return value;
-    }
-
-    public boolean insertSlave(String key, String tStampedValue) {
-        /* For keys with timestamps*/
-        DataOutputStream outputStream;
-        String coord = router.getCoordinator(key, false);
-        try {
-            String[] valTS = tStampedValue.split("##");
-            int timestamp = Integer.parseInt(valTS[1]);
-            String currentValue = getFileContents(key, true, true);
-            if (currentValue != null) {
-                // Don't overwrite a more recent or already executed insertion
-                String[] currentValArray = currentValue.split("##");
-                int currentInsertTime = Integer.parseInt(currentValArray[1]);
-                if (timestamp <= currentInsertTime) {
-                    return false;
-                }
-            }
-            getVectorClock(coord, timestamp, false);
-            outputStream = new DataOutputStream(getContext().openFileOutput(key, Context.MODE_PRIVATE));
-            outputStream.writeUTF(tStampedValue);
-            outputStream.close();
-//            Log.d(TAG, "inserted slave "+ key + ":" + tStampedValue);
-            return true;
-        }
-        catch (IOException e){
-            Log.e(TAG, "File write failed");
-        }
-        return true;
-    }
-
     @Override
-	public boolean onCreate() {
-		// TODO Auto-generated method stub
+    public boolean onCreate() {
+        // TODO Auto-generated method stub
         Log.d(TAG, "Provider instance created!");
         TelephonyManager tel = (TelephonyManager) this.getContext().getSystemService(Context.TELEPHONY_SERVICE);
         myPort = tel.getLine1Number().substring(tel.getLine1Number().length() - 4);
@@ -361,12 +193,12 @@ public class SimpleDynamoProvider extends ContentProvider {
 
         Log.d(TAG, count + " messages recovered");
         Log.d(TAG, "All initialized!");
-		return true;
-	}
+        return true;
+    }
 
-	@Override
-	public Cursor query(Uri uri, String[] projection, String selection,
-			String[] selectionArgs, String sortOrder) {
+    @Override
+    public Cursor query(Uri uri, String[] projection, String selection,
+            String[] selectionArgs, String sortOrder) {
         if (!checkUri(uri)){
             return null;
         }
@@ -433,9 +265,215 @@ public class SimpleDynamoProvider extends ContentProvider {
         }
         Log.d(TAG, "Returned " +kvResult[1]+" for " + selection);
         return getCursor(selection, kvResult[1]);
-	}
+    }
+
+    @Override
+    public int update(Uri uri, ContentValues values, String selection,
+            String[] selectionArgs) {
+        // TODO Auto-generated method stub
+        return 0;
+    }
+
+    public boolean deleteNodeLocal(String selection) {
+        /*
+            Deletes a key from this node
+        */
+        return getContext().deleteFile(selection);
+    }
+
+    public int deleteAllLocal(){
+        /*
+            Deletes all keys on this node
+        */
+        String[] files = getContext().fileList();
+        for (String file : files){
+            deleteNodeLocal(file);
+        }
+        return files.length;
+    }
+
+    public void deleteMaster(String key){
+        /*
+            Deletes all keys for which this node acta as a coordinator.
+            i.e delete from all replica servers too
+        */
+        //treat deletions as writes
+        String value = insertMaster(key,"blah",true);
+        for (String node : router.getSuccessors(myPort)){
+            Message msg = new Message(MType.INSERT_REPLICA,myPort,getKVStr(key,value),getMessageId());
+            new ClientTask(msg, node, false).executeOnExecutor(SER);
+        }
+    }
+
+    private Message sendAndDetect(Message msgTemplate, String coord){
+        /*
+            Sends a message (typically to a replica group), starting with 
+            the coordinator, If this fails, then it sends to the replica servers 
+            in order of their ports until some node in the replica group successfully 
+            receives (and processes) the message
+        */
+        Message reply;
+        Queue<Message> retryQueue = new LinkedList<>();
+        ArrayList<String> successors = router.getSuccessors(coord);
+        int count = 0;
+        String currentTarget;
+        // If there is a failure, resend the request to the successors
+        while (count < successors.size()) {
+            currentTarget = coord;
+            if (count > 0){
+                currentTarget = successors.get(count - 1);
+            }
+            if (currentTarget.equals(myPort)){
+                Log.d(TAG, "THIS ONE IS MINE");
+            }
+            Message msg = msgTemplate.makeCopy(getMessageId());
+            new ClientTask(msg, currentTarget, true).executeOnExecutor(SER);
+            reply = msg.getReply();
+            if (!reply.getmType().equals(MType.VOID)){
+                Log.d(TAG, "Returning " + reply + " to message " + msg);
+                return reply;
+            }
+            retryQueue.add(msg);
+            count += 1;
+            Log.d(TAG, "THAT ONE GOT AWAY, RETRYING ...");
+        }
+
+        // Check if some reply has arrived for one of the old message. (Un)surprisingly,
+        // this actually happens
+        while (!retryQueue.isEmpty()){
+            Message msg = retryQueue.poll();
+            reply = msg.getReply();
+            if (!reply.getmType().equals(MType.VOID)){
+                return reply;
+            }
+        }
+
+        Log.d(TAG, "ALL HOPE IS LOST - MAYDAY");
+        return null;
+    }
+
+
+    public String insertKeyLocal(String key, String value) throws QuorumException {
+        /*
+            Inserts the key into this node, with the assumption that this node acts as a coordinator
+            i.e Timestamps and inserts the key locally, and then sends the timestamped key-value to 
+            all replica servers for insertion
+        */
+        String timeStampedValue = insertMaster(key, value, false);
+        int quorumCount = 1;
+        Log.d(TAG, "successors are " + router.getSuccessors(myPort));
+        Log.d(TAG, "Inserting keys...");
+        Deque<Message> tempQueue = new LinkedList<>();
+        ArrayList<String> successors = Router.getInstance().getSuccessors(SimpleDynamoProvider.myPort);
+
+        for (String node : successors) {
+            Message msg = new Message(MType.INSERT_REPLICA,myPort,getKVStr(key, timeStampedValue),getMessageId());
+            tempQueue.add(msg);
+            new ClientTask(msg, node, true).executeOnExecutor(AsyncTask.SERIAL_EXECUTOR);
+        }
+        Deque<Message> backupQueue = new LinkedList<>();
+        int waitRounds = 0;
+
+        while (quorumCount < WRITE_QUORUM) {
+            Log.d(TAG, "Current queue is " + tempQueue);
+            if (tempQueue.isEmpty() && waitRounds <=1){
+                Log.d(TAG, "Swapping queues");
+                tempQueue = backupQueue;
+                backupQueue = new LinkedList<>();
+                waitRounds += 1;
+            }
+            Message msg = tempQueue.poll();
+            if(msg != null) {
+                Message reply = msg.getReply();
+                if (reply.getmType().equals(MType.VOID)) {
+                    //Just in case this isn't a failure
+                    backupQueue.add(msg);
+                }
+                else if (reply.getmType().equals(MType.REJECT)) {
+                    //do nothing
+                }
+                else{
+                    quorumCount += 1;
+                    Log.d(TAG, "One replica replied, quorum count now " + quorumCount);
+                    if (quorumCount >= WRITE_QUORUM) {
+                        return timeStampedValue;
+                    }
+                }
+            }
+            else {
+                Log.d(TAG, "ALL HOPE IS LOST. MAYDAY :'(");
+                break;
+            }
+        }
+        return timeStampedValue;
+    }
+
+    public String insertMaster(String key, String value, boolean delete) {
+        /* 
+            Timestamps and inserts the key into this node.
+            Return value format: <coordinator>##<timestamp>##<value>##e:
+            Ensures that write is entirely completed for it to be
+            reported as complete
+        */
+        String deletedFlag = "E";
+        if (delete){
+            deletedFlag = DELETED_FLAG;
+        }
+
+        DataOutputStream outputStream;
+        String coord = router.getCoordinator(key, false);
+        value = coord + "##" + getVectorClock(coord,0, true) + "##" + value + "##" + deletedFlag;
+        try {
+            outputStream = new DataOutputStream(getContext().openFileOutput(key, Context.MODE_PRIVATE));
+            outputStream.writeUTF(value);
+            outputStream.close();
+            return value;
+        }
+        catch (IOException e){
+            Log.e(TAG, "File write failed");
+        }
+        return value;
+    }
+
+    public boolean insertSlave(String key, String tStampedValue) {
+        /*
+            Inserts the key into this node as a slave (this means that 
+            the current timestamp on the key will be accepted as is)
+        */
+        DataOutputStream outputStream;
+        String coord = router.getCoordinator(key, false);
+        try {
+            String[] valTS = tStampedValue.split("##");
+            int timestamp = Integer.parseInt(valTS[1]);
+            String currentValue = getFileContents(key, true, true);
+            if (currentValue != null) {
+                // Don't overwrite a more recent or already executed insertion
+                String[] currentValArray = currentValue.split("##");
+                int currentInsertTime = Integer.parseInt(currentValArray[1]);
+                if (timestamp <= currentInsertTime) {
+                    return false;
+                }
+            }
+            getVectorClock(coord, timestamp, false);
+            outputStream = new DataOutputStream(getContext().openFileOutput(key, Context.MODE_PRIVATE));
+            outputStream.writeUTF(tStampedValue);
+            outputStream.close();
+//            Log.d(TAG, "inserted slave "+ key + ":" + tStampedValue);
+            return true;
+        }
+        catch (IOException e){
+            Log.e(TAG, "File write failed");
+        }
+        return true;
+    }
+
 
     public MatrixCursor queryMaster(String selection) throws QuorumException {
+        /*
+            Returns a query result this key, with the assumption that this node acts
+            as the coordinator for the said key. Basically gets the results from all
+            replica servers and selects value with the latest timestamp
+        */
         Log.d(TAG, "Querying local... ");
         MatrixCursor mat = queryNodeLocal(selection);
         String[] result = getContentsAsArray(selection);
@@ -509,6 +547,9 @@ public class SimpleDynamoProvider extends ContentProvider {
 
 
     public MatrixCursor queryNodeLocal(String selection) {
+        /*
+            Queries the local filesystem for the key (selection)
+        */
         if (selection.contains("^")){
             Log.d(TAG, "This is a local wildcard query");
             return wildCardQueryLocal(selection);
@@ -531,6 +572,9 @@ public class SimpleDynamoProvider extends ContentProvider {
     }
 
     private MatrixCursor queryAllLocal() {
+        /*
+            Returns all keys stored on the local filesystem
+        */
         MatrixCursor mat = new MatrixCursor(KV_FIELDS);
         for (String selection : getContext().fileList()) {
             try {
@@ -545,18 +589,20 @@ public class SimpleDynamoProvider extends ContentProvider {
         return mat;
     }
 
-	@Override
-	public int update(Uri uri, ContentValues values, String selection,
-			String[] selectionArgs) {
-		// TODO Auto-generated method stub
-		return 0;
-	}
+
 
     public synchronized String getMessageId(){
+        /*
+            Returns a unique id for a message. Synchronized to 
+            avoid getting clashing ids during concurrent calls
+        */
         return myPort + "i" + messageId++;
     }
 
     public String getFileContents(String key, boolean withTimeStamp, boolean includeDeleted) {
+        /*
+            Reads files and returns the actual striog values of keys from raw files
+        */
         FileInputStream inputStream;
         try {
             inputStream = getContext().openFileInput(key);
@@ -581,6 +627,10 @@ public class SimpleDynamoProvider extends ContentProvider {
     }
 
     public String[] getContentsAsArray(String key) {
+        /*
+            Returns values of a key in a specified array format after splitting
+            by the '##' separator
+        */
         FileInputStream inputStream;
         try {
             inputStream = getContext().openFileInput(key);
@@ -604,12 +654,18 @@ public class SimpleDynamoProvider extends ContentProvider {
 
 
     private MatrixCursor getCursor(String key, String value) {
+        /*
+            Returns a Cursor representation of a key-value pair
+        */
         MatrixCursor mat = new MatrixCursor(KV_FIELDS);
         mat.addRow(new String[]{key, value});
         return mat;
     }
 
     private Cursor getCursor(MatrixCursor mat, TreeSet<String> kvs) {
+        /*
+            Returns a Cursor representation of a set of key-value pairs
+        */
         for (String kv : kvs) {
             if (!kv.equals("")) {
                 String[] kvp = kv.split(":");
@@ -622,6 +678,9 @@ public class SimpleDynamoProvider extends ContentProvider {
     }
 
     private Cursor getCursor(MatrixCursor mat, HashSet<String> kvs, String wildCard) {
+        /*
+            Returns a Cursor representation of a set of key-value pairs filtered by a leading wildcard
+        */
         String[] cards = wildCard.split(WILDCARD);
         for (String kv : kvs) {
             if (!kv.equals("")) {
@@ -659,6 +718,9 @@ public class SimpleDynamoProvider extends ContentProvider {
     }
 
     private boolean checkUri(Uri uri){
+        /*
+            Returns a flag indication whether a given uri matches the uri of this content provider
+        */
         boolean uriFound = uri.toString().contains("edu.buffalo.cse.cse486586.simpledynamo.provider");
         if (!uriFound){
             Log.e(TAG, "Uri " + uri.toString() + " not found!");
@@ -667,6 +729,9 @@ public class SimpleDynamoProvider extends ContentProvider {
     }
 
     public HashSet<String> listKVLocal() {
+        /*
+            Returns a set of all key value pairs stored on this node
+        */
         HashSet<String> localList = new HashSet<>();
         for (String selection : getContext().fileList()) {
             try {
@@ -683,6 +748,11 @@ public class SimpleDynamoProvider extends ContentProvider {
     }
 
     public MatrixCursor wildCardQueryLocal(String key){
+        /*
+            Queries this node for keys matching the supplied wildcard query
+            (Only leading and trailing wildcards allowed).
+            The wildcard character is specified by the class constant WILDCARD
+        */
         MatrixCursor mat = new MatrixCursor(KV_FIELDS);
         String[] cards = key.split(WILDCARD);
         for (String selection : getContext().fileList()) {
@@ -701,6 +771,11 @@ public class SimpleDynamoProvider extends ContentProvider {
     }
 
     public Cursor wildCardQueryGlobal(String key){
+        /*
+            Queries the global system for keys matching the supplied wildcard query
+            (Only leading and trailing wildcards allowed).
+            The wildcard character is specified by the class constant WILDCARD
+        */
         MatrixCursor mat = wildCardQueryLocal(key);
         HashSet<String> results = new HashSet<>();
 
@@ -724,8 +799,9 @@ public class SimpleDynamoProvider extends ContentProvider {
     }
 
     public synchronized int getVectorClock(String node, int value, boolean increment){
-        /* Increments and gets a timestamp for a coordinator, or just updates the value
-        *  received.
+        /* 
+            Increments and gets the current timestamp for a coordinator, or just updates the value
+            received.
          */
         int currTS = vectorClock.get(node);
         if (increment) {
@@ -738,6 +814,11 @@ public class SimpleDynamoProvider extends ContentProvider {
     }
 
     private void initVectorClock(){
+        /*
+            Initializes the vector clock (Usually when this node starts).
+            Finds the last recorded timestamped key for all nodes, and starts
+            the clock from there
+        */
         Log.d(TAG, "Initializing Vector clock...");
         for (String node : allNodes){
             vectorClock.put(node, 0);
@@ -760,6 +841,9 @@ public class SimpleDynamoProvider extends ContentProvider {
         Log.d(TAG, "Vector clock now " + vectorClock);
     }
     public String getKVStr(String key, String value){
+        /*
+            Returns a string representation of a key value pair
+        */
         return key+":"+value;
     }
 }

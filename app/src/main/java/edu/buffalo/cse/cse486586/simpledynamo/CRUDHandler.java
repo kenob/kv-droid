@@ -11,9 +11,10 @@ import java.util.LinkedList;
  * Created by kenob on 4/22/15.
  */
 public class CRUDHandler extends Thread {
-    /* Performs all activities requiring consensus. Activity type is inferred from the called
-       constructor.
-       Constructor format:
+    /* 
+        Performs all activities requiring potentially blocking communication with other nodes. 
+        Activity type is inferred from the calleed constructor.
+        Constructor format:
         CRUD(dynamoprovider_instance, callback_object, params[])
      */
     private final SimpleDynamoProvider dhtp;
@@ -54,6 +55,12 @@ public class CRUDHandler extends Thread {
     }
 
     private void insert() throws QuorumException {
+        /*
+            Inserts a key for which this node acts as a coordinator.
+            Performs the insert somewhat asynchronously in the replica servers,
+            and only sends a confirmation to the requesting node when 
+            a number of nodes equal to the WRITE_QUORUM have successfully saved the key
+        */
         String key = params[0];
         String value = params[1];
         String timeStampedValue = dhtp.insertMaster(key, value, false);
@@ -132,7 +139,13 @@ public class CRUDHandler extends Thread {
     }
 
     private void query() throws QuorumException {
-       boolean replied = false;
+        /*
+            Queries a key for which this node acts as a coordinator.
+            Queries the replica servers somewhat asynchronously,
+            and sends the result with the latest timestamp to the requesting node after 
+            a number of nodes equal to the READ_QUORUM have replied
+        */
+        boolean replied = false;
         Message reply;
         Deque<Message> tempQueue = new LinkedList<>();
         ArrayList<String> successors = Router.getInstance().getSuccessors(SimpleDynamoProvider.myPort);
@@ -210,6 +223,10 @@ public class CRUDHandler extends Thread {
     }
 
     private void recover(){
+        /*
+            Saves all keys sent to this node (typically after a wake message 
+            was sent out)
+        */
         String[] contents = callbackMsg.getMessage().split(",");
         if (contents.length > 0) {
             for (String kv : contents) {
@@ -222,6 +239,9 @@ public class CRUDHandler extends Thread {
     }
 
     private void transfer(){
+        /*
+            Transfers all missed keys which should reside in the requesting node to such a node
+        */
         String message = ServerTask.getServerTask().getDhtp().transferToNode(callbackMsg.getSender());
         if (message != null) {
             callbackMsg.setMessage(message);
