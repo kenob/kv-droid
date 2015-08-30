@@ -1,1 +1,0 @@
-/home/kenob/code/586/SimpleDynamo/SimpleDynamo/app/build/intermediates/classes/debug
