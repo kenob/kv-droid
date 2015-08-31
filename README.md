@@ -1,4 +1,4 @@
-# kv-droid
+# kv-droid (formerly SimpleDynamo)
 A distributed (P2P) key value storage for Android
 
 A distributed key value store for Android devices (connected AVD's for now) providing:
